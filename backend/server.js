@@ -13,32 +13,15 @@ const orderRoutes = require("./routes/orderRoutes");
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// CORS configuration
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-
-    // List of allowed origins
-    const allowedOrigins = [
-      process.env.FRONTEND_URL,
-      "https://recommender-system-seven.vercel.app",
-      "http://localhost:5173",
-    ].filter(Boolean); // Remove undefined values
-
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
-
-app.use(cors(corsOptions));
+// CORS configuration - allow all origins
+app.use(
+  cors({
+    origin: true, // Allow all origins
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 app.use(express.json());
 
 mongoose
