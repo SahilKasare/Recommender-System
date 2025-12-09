@@ -62,10 +62,6 @@ const Recommendations = () => {
                   <p>Strengths: {rec.top_aspects.join(", ")}</p>
                 )}
 
-                <div className="product-card-actions">
-                  <Link to={`/product/${rec.asin}`}>View details</Link>
-                </div>
-
                 <div style={{ marginTop: 8 }} className="product-card-actions">
                   <button
                     className="add-to-cart-btn"

@@ -4,6 +4,14 @@ const Review = require("../models/reviewModel");
 const User = require("../models/userModel");
 const Order = require("../models/orderModel");
 
+// Placeholder reference to a persisted hybrid model artifact
+const HYBRID_MODEL_PATH = path.join(
+  __dirname,
+  "..",
+  "models",
+  "hybrid_model.pkl"
+);
+
 // Random demo user pool (replace or extend as needed)
 const DEMO_USER_IDS = [
   "AGP7EEKKJLA6CWVVGFW35VOUJDCA",
@@ -267,15 +275,18 @@ async function checkAndTriggerModelRerun() {
       console.log("⚠️  THRESHOLD REACHED - Model rerun required!");
       console.log("🔄 Triggering recommendation model retraining...");
 
-      // Here you would trigger the actual model rerun
-      // For demonstration, we'll just log it
-      // In production, this could:
-      // 1. Call a Python script to retrain the model
-      // 2. Update model files
-      // 3. Clear recommendation cache
-      // 4. Send notification to admin
-
-      // Example: triggerModelRetraining();
+      // Demonstrate pulling the current hybrid model artifact before retraining
+      if (fs.existsSync(HYBRID_MODEL_PATH)) {
+        console.log(`📦 Found existing hybrid model at: ${HYBRID_MODEL_PATH}`);
+        const modelBytes = fs.readFileSync(HYBRID_MODEL_PATH);
+        console.log(
+          `📄 Model size: ${modelBytes.length} bytes (placeholder load)`
+        );
+      } else {
+        console.warn(
+          `⚠️ Hybrid model file not found at ${HYBRID_MODEL_PATH} — would download or rebuild.`
+        );
+      }
 
       return {
         shouldRerun: true,
@@ -313,4 +324,154 @@ async function checkAndTriggerModelRerun() {
   }
 }
 
-module.exports = { getRecommendations, checkAndTriggerModelRerun };
+/**
+ * Demographic-based cold-start recommendations.
+ * For a brand-new user with no interactions, we:
+ * 1) Compare their demographics (age, gender, location/address)
+ * 2) Find similar existing users who already have reviews
+ * 3) Recommend the most popular products from those similar users
+ *
+ * This helper is NOT wired to any route; it's for demonstration.
+ */
+async function getDemographicRecommendations({
+  age,
+  gender,
+  address,
+  topN = 20,
+  ageTolerance = 5,
+}) {
+  const normalize = (str = "") => str.trim().toLowerCase();
+  const targetAddr = normalize(address);
+
+  // Find users that actually have interactions (reviews)
+  const usersWithReviews = await Review.aggregate([
+    { $group: { _id: "$user_id", reviewCount: { $sum: 1 } } },
+  ]);
+  const reviewUserIds = new Set(usersWithReviews.map((u) => u._id));
+
+  // Fetch demographic info for those users
+  const candidateUsers = await User.find(
+    { user_id: { $in: Array.from(reviewUserIds) } },
+    { user_id: 1, age: 1, gender: 1, address: 1 }
+  );
+
+  // Score by demographic similarity
+  const scoredUsers = candidateUsers
+    .map((u) => {
+      let score = 0;
+      // Age similarity
+      if (typeof age === "number" && typeof u.age === "number") {
+        const diff = Math.abs(u.age - age);
+        if (diff <= ageTolerance) {
+          score += 2;
+          score += Math.max(0, 1 - diff / ageTolerance);
+        }
+      }
+      // Gender match
+      if (
+        gender &&
+        u.gender &&
+        gender.toLowerCase() === u.gender.toLowerCase()
+      ) {
+        score += 2;
+      }
+      // Location / address fuzzy match (simple token/substring overlap)
+      const uAddr = normalize(u.address);
+      if (targetAddr && uAddr) {
+        if (uAddr.includes(targetAddr) || targetAddr.includes(uAddr)) {
+          score += 1.5;
+        } else {
+          const tokens = new Set(targetAddr.split(/\W+/).filter(Boolean));
+          const overlap = uAddr
+            .split(/\W+/)
+            .filter((t) => t && tokens.has(t)).length;
+          if (overlap > 0) score += Math.min(1, overlap * 0.3);
+        }
+      }
+      return { user_id: u.user_id, score };
+    })
+    .filter((u) => u.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 200); // cap for efficiency
+
+  if (scoredUsers.length === 0) {
+    return {
+      strategy: "demographic",
+      message: "No similar users found by demographics",
+      recommendations: [],
+      statistics: { consideredUsers: candidateUsers.length },
+    };
+  }
+
+  const similarUserIds = scoredUsers.map((u) => u.user_id);
+
+  // Aggregate interactions from similar users
+  const interactions = await Review.aggregate([
+    { $match: { user_id: { $in: similarUserIds } } },
+    {
+      $group: {
+        _id: "$asin",
+        reviews: { $sum: 1 },
+        avgRating: { $avg: "$overall" },
+        users: { $addToSet: "$user_id" },
+      },
+    },
+    {
+      $project: {
+        asin: "$_id",
+        _id: 0,
+        reviews: 1,
+        avgRating: { $ifNull: ["$avgRating", 0] },
+        userOverlap: { $size: "$users" },
+      },
+    },
+  ]);
+
+  if (interactions.length === 0) {
+    return {
+      strategy: "demographic",
+      message: "No interactions found for similar users",
+      recommendations: [],
+      statistics: { similarUsers: similarUserIds.length },
+    };
+  }
+
+  // Score products using overlap + rating + volume
+  const scoredProducts = interactions
+    .map((p) => {
+      const overlapScore = Math.log(1 + p.userOverlap);
+      const reviewScore = Math.log(1 + p.reviews);
+      const ratingScore = p.avgRating / 5;
+      const combined =
+        0.45 * overlapScore + 0.35 * ratingScore + 0.2 * reviewScore;
+      return {
+        asin: p.asin,
+        score: Number(combined.toFixed(6)),
+        stats: {
+          userOverlap: p.userOverlap,
+          reviews: p.reviews,
+          avgRating: Number(p.avgRating?.toFixed(3) ?? 0),
+        },
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topN);
+
+  return {
+    strategy: "demographic",
+    message: "Cold-start demographic recommendations",
+    recommendations: scoredProducts,
+    statistics: {
+      similarUsers: similarUserIds.length,
+      consideredUsers: candidateUsers.length,
+      topN,
+    },
+    inputs: { age, gender, address },
+  };
+}
+
+module.exports = {
+  getRecommendations,
+  checkAndTriggerModelRerun,
+  getDemographicRecommendations,
+};
