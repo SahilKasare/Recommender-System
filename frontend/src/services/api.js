@@ -1,5 +1,10 @@
 import axios from "axios";
-const api = axios.create({ baseURL: "/api" });
+
+// Use environment variable for API URL, fallback to Render backend or localhost
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL;
+
+const api = axios.create({ baseURL: API_BASE_URL });
 export const getProducts = () => api.get("/products");
 export const getProductByAsin = (asin) => api.get(`/products/${asin}`);
 export const signup = (userData) => api.post("/user/signup", userData);
