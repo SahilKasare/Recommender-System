@@ -13,7 +13,7 @@ const orderRoutes = require("./routes/orderRoutes");
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// CORS configuration for production
+// CORS configuration
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
@@ -22,17 +22,10 @@ const corsOptions = {
     // List of allowed origins
     const allowedOrigins = [
       process.env.FRONTEND_URL,
+      "https://recommender-system-seven.vercel.app",
       "http://localhost:5173",
-      "http://localhost:3000",
-      "http://127.0.0.1:5173",
     ].filter(Boolean); // Remove undefined values
 
-    // In development, allow all origins
-    if (process.env.NODE_ENV !== "production") {
-      return callback(null, true);
-    }
-
-    // In production, check against allowed origins
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {

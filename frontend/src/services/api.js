@@ -1,8 +1,15 @@
 import axios from "axios";
 
 // Use environment variable for API URL, fallback to Render backend or localhost
+// In Vite, environment variables are accessed via import.meta.env
 const API_BASE_URL =
-  import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL;
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.VITE_BACKEND_URL
+    ? `${import.meta.env.VITE_BACKEND_URL}/api`
+    : null) ||
+  (import.meta.env.PROD
+    ? "https://recommender-system-kk8n.onrender.com/api"
+    : "/api");
 
 const api = axios.create({ baseURL: API_BASE_URL });
 export const getProducts = () => api.get("/products");
